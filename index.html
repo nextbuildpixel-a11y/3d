@@ -956,14 +956,17 @@
     }
 
     const images = new Array(TOTAL_FRAMES);
+    const targetFPS = 24;
+    const frameInterval = 1000 / targetFPS; // ~41.67ms per frame (locked 24 FPS)
+    let lastDrawTime = 0;
     let targetFrame = 0;
     let currentFrame = 0;
-    let lastDrawn = -1;
+    let lastDrawnFrame = -1;
 
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      lastDrawn = -1; // Trigger repaint
+      lastDrawnFrame = -1; // Trigger repaint
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
@@ -984,13 +987,20 @@
       return null;
     }
 
-    // ── SILKY SMOOTH 60 FPS PHYSICS LERP RENDER LOOP ──
-    function renderLoop() {
-      // Sub-frame smooth lerp calculation
-      currentFrame += (targetFrame - currentFrame) * 0.12;
+    // ── LOCKED 24 FPS DELTA-TIME RENDER LOOP ──
+    function renderLoop(currentTime) {
+      requestAnimationFrame(renderLoop);
+
+      // Delta-time gate: strictly locks to 24 FPS
+      if (currentTime - lastDrawTime < frameInterval) return;
+      lastDrawTime = currentTime - ((currentTime - lastDrawTime) % frameInterval);
+
+      // Smooth continuous mapping without mid-scroll freeze
+      currentFrame += (targetFrame - currentFrame) * 0.25;
       const frameToDraw = Math.min(TOTAL_FRAMES - 1, Math.max(0, Math.round(currentFrame)));
 
-      if (frameToDraw !== lastDrawn) {
+      // Only draw when the frame index actually changes
+      if (frameToDraw !== lastDrawnFrame) {
         const img = getNearestImage(frameToDraw);
         if (img && img.complete && (img.naturalWidth > 0 || img.width > 0)) {
           const imgW = img.naturalWidth || img.width;
@@ -1002,10 +1012,9 @@
           const drawY = (canvas.height - drawH) * 0.5;
 
           ctx.drawImage(img, drawX, drawY, drawW, drawH);
-          lastDrawn = frameToDraw;
+          lastDrawnFrame = frameToDraw;
         }
       }
-      requestAnimationFrame(renderLoop);
     }
     requestAnimationFrame(renderLoop);
 
@@ -1056,7 +1065,7 @@
         };
         img.onload = () => {
           images[i] = img;
-          if (i === 0) lastDrawn = -1;
+          if (i === 0) lastDrawnFrame = -1;
           onDone();
         };
         img.onerror = () => {
@@ -1102,7 +1111,7 @@
     });
 
     // ══════════════════════════════════════════
-    //  LENIS + SCROLLTRIGGER (60 FPS BUTTERY INERTIA)
+    //  LENIS + SCROLLTRIGGER (ZERO MID-SCROLL FREEZE)
     // ══════════════════════════════════════════
     if (typeof Lenis !== 'undefined') {
       try {
@@ -1130,7 +1139,7 @@
           trigger: '#hero-scroll-track',
           start: 'top top',
           end: 'bottom bottom',
-          scrub: 0.5,
+          scrub: 0.1,
           onUpdate: (self) => {
             const progress = Math.max(0, Math.min(1, self.progress));
             targetFrame = progress * (TOTAL_FRAMES - 1);
