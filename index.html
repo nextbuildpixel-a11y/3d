@@ -957,12 +957,13 @@
 
     const images = new Array(TOTAL_FRAMES);
     let targetFrame = 0;
-    let lastDrawnFrame = -1;
+    let currentFrame = 0;
+    let lastDrawn = -1;
 
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      lastDrawnFrame = -1; // Trigger repaint
+      lastDrawn = -1; // Trigger repaint
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
@@ -983,10 +984,14 @@
       return null;
     }
 
-    // ── LIGHTWEIGHT DIRTY-CHECK DRAW (ZERO IDLE GPU CHURN) ──
+    // ── SILKY SMOOTH 60 FPS PHYSICS LERP RENDER LOOP ──
     function renderLoop() {
-      if (targetFrame !== lastDrawnFrame) {
-        const img = getNearestImage(targetFrame);
+      // Sub-frame smooth lerp calculation
+      currentFrame += (targetFrame - currentFrame) * 0.12;
+      const frameToDraw = Math.min(TOTAL_FRAMES - 1, Math.max(0, Math.round(currentFrame)));
+
+      if (frameToDraw !== lastDrawn) {
+        const img = getNearestImage(frameToDraw);
         if (img && img.complete && (img.naturalWidth > 0 || img.width > 0)) {
           const imgW = img.naturalWidth || img.width;
           const imgH = img.naturalHeight || img.height;
@@ -997,7 +1002,7 @@
           const drawY = (canvas.height - drawH) * 0.5;
 
           ctx.drawImage(img, drawX, drawY, drawW, drawH);
-          lastDrawnFrame = targetFrame;
+          lastDrawn = frameToDraw;
         }
       }
       requestAnimationFrame(renderLoop);
@@ -1051,7 +1056,7 @@
         };
         img.onload = () => {
           images[i] = img;
-          if (i === 0) lastDrawnFrame = -1;
+          if (i === 0) lastDrawn = -1;
           onDone();
         };
         img.onerror = () => {
@@ -1097,13 +1102,13 @@
     });
 
     // ══════════════════════════════════════════
-    //  LENIS + SCROLLTRIGGER (TAMED TRACKPAD INERTIA)
+    //  LENIS + SCROLLTRIGGER (60 FPS BUTTERY INERTIA)
     // ══════════════════════════════════════════
     if (typeof Lenis !== 'undefined') {
       try {
         const lenis = new Lenis({
-          lerp: 0.1,
-          wheelMultiplier: 0.65,
+          lerp: 0.08,
+          wheelMultiplier: 0.8,
           touchMultiplier: 1.0,
           infinite: false
         });
@@ -1125,10 +1130,10 @@
           trigger: '#hero-scroll-track',
           start: 'top top',
           end: 'bottom bottom',
-          scrub: 0.1,
+          scrub: 0.5,
           onUpdate: (self) => {
             const progress = Math.max(0, Math.min(1, self.progress));
-            targetFrame = Math.min(TOTAL_FRAMES - 1, Math.floor(progress * (TOTAL_FRAMES - 1)));
+            targetFrame = progress * (TOTAL_FRAMES - 1);
           }
         });
       } catch (e) { console.warn('GSAP init failed', e); }
@@ -1139,7 +1144,7 @@
         const rect = track.getBoundingClientRect();
         const total = track.offsetHeight - window.innerHeight;
         const progress = Math.max(0, Math.min(1, -rect.top / total));
-        targetFrame = Math.min(TOTAL_FRAMES - 1, Math.floor(progress * (TOTAL_FRAMES - 1)));
+        targetFrame = progress * (TOTAL_FRAMES - 1);
       }, { passive: true });
     }
 
