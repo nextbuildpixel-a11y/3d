@@ -706,7 +706,13 @@ textarea.form-ctrl{resize:none;height:80px}
 //  LENIS + GSAP
 // ══════════════════════════════════════════
 gsap.registerPlugin(ScrollTrigger);
-const lenis = new Lenis({ lerp: 0.08, smoothWheel: true });
+const isMobileDevice = window.innerWidth < 768 || ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const lenis = new Lenis({
+  lerp: isMobileDevice ? 0.12 : 0.08,
+  smoothWheel: true,
+  syncTouch: false,
+  touchMultiplier: 1.2
+});
 window.lenis = lenis;
 lenis.on('scroll', ScrollTrigger.update);
 gsap.ticker.add(time => lenis.raf(time * 1000));
@@ -752,10 +758,17 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
 // ══════════════════════════════════════════
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+function getDPR() {
+  const isSmallScreen = window.innerWidth < 768 || ('ontouchstart' in window);
+  return isSmallScreen ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
+}
+
+let DPR = getDPR();
 function resizeCanvas() {
-  canvas.width = window.innerWidth * DPR;
-  canvas.height = window.innerHeight * DPR;
+  DPR = getDPR();
+  canvas.width = Math.round(window.innerWidth * DPR);
+  canvas.height = Math.round(window.innerHeight * DPR);
 }
 resizeCanvas();
 ctx.imageSmoothingEnabled = true;
@@ -770,6 +783,7 @@ let loadedCount = 0;
 let isPreloaderDismissed = false;
 let scrollScrubInitialized = false;
 let lastRenderedImg = null;
+let renderRaf = null;
 
 const plBar = document.getElementById('pl-bar');
 const plPct = document.getElementById('pl-pct');
@@ -800,17 +814,42 @@ function drawFrame() {
   lastRenderedImg = img;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight) * 1.05;
-  const dw = img.naturalWidth * scale, dh = img.naturalHeight * scale;
-  const tx = state.tiltX * 18, ty = state.tiltY * 14;
+  
+  // Smart Adaptive Framing: Desktop/Widescreen uses full cover; Mobile/Portrait preserves full waffle framing
+  const isPortrait = canvas.height > canvas.width || window.innerWidth < 768;
+  let scale;
+  if (isPortrait) {
+    // Fits entire waffle horizontally without aggressive crop
+    const fitWidth = canvas.width / img.naturalWidth;
+    const fitHeight = canvas.height / img.naturalHeight;
+    scale = Math.max(fitWidth * 1.08, fitHeight * 0.52);
+  } else {
+    // Desktop edge-to-edge cover
+    scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight) * 1.04;
+  }
+
+  const dw = img.naturalWidth * scale;
+  const dh = img.naturalHeight * scale;
+  const tx = isMobileDevice ? 0 : state.tiltX * 18;
+  const ty = isMobileDevice ? 0 : state.tiltY * 14;
+  
   ctx.drawImage(img, (canvas.width - dw) / 2 + tx, (canvas.height - dh) / 2 + ty, dw, dh);
+}
+
+function requestRender() {
+  if (!renderRaf) {
+    renderRaf = requestAnimationFrame(() => {
+      drawFrame();
+      renderRaf = null;
+    });
+  }
 }
 
 function dismissPreloader() {
   if (isPreloaderDismissed) return;
   isPreloaderDismissed = true;
   if (!scrollScrubInitialized) initScrollScrub();
-  drawFrame();
+  requestRender();
   if (preloader) {
     preloader.classList.add('done');
     setTimeout(() => { preloader.style.display = 'none'; }, 900);
@@ -826,11 +865,11 @@ function initScrollScrub() {
     ease: 'none',
     scrollTrigger: {
       trigger: '#hero-wrap',
-      scrub: 0.5,
+      scrub: isMobileDevice ? 0.3 : 0.5,
       start: 'top top',
       end: 'bottom bottom'
     },
-    onUpdate: drawFrame
+    onUpdate: requestRender
   });
 }
 
@@ -841,7 +880,7 @@ function onFrameReady(index) {
     if (plBar) plBar.style.width = progress + '%';
     if (plPct) plPct.textContent = progress + '%';
   }
-  if (loadedCount === 1) drawFrame();
+  if (loadedCount === 1) requestRender();
   if (loadedCount >= CRITICAL_FRAMES && !isPreloaderDismissed) {
     dismissPreloader();
   }
@@ -858,7 +897,7 @@ for (let i = 0; i < CRITICAL_FRAMES; i++) {
 
 // ── BACKGROUND STREAM: Stream Remaining Frames concurrently ──
 function streamRemainingFrames() {
-  const CONCURRENCY = 6;
+  const CONCURRENCY = isMobileDevice ? 4 : 6;
   let nextIdx = CRITICAL_FRAMES;
 
   function loadNext() {
@@ -892,20 +931,22 @@ setTimeout(() => {
   }
 }, 2500);
 
-window.addEventListener('resize', () => { resizeCanvas(); drawFrame(); });
+window.addEventListener('resize', () => { resizeCanvas(); requestRender(); });
 
-// ── MOUSE PARALLAX TILT ──
-let rafTilt;
-document.addEventListener('mousemove', e => {
-  cancelAnimationFrame(rafTilt);
-  rafTilt = requestAnimationFrame(() => {
-    const nx = (e.clientX / window.innerWidth - 0.5);
-    const ny = (e.clientY / window.innerHeight - 0.5);
-    state.tiltX += (nx - state.tiltX) * 0.08;
-    state.tiltY += (ny - state.tiltY) * 0.08;
-    drawFrame();
+// ── MOUSE PARALLAX TILT (Desktop only) ──
+if (!isMobileDevice) {
+  let rafTilt;
+  document.addEventListener('mousemove', e => {
+    cancelAnimationFrame(rafTilt);
+    rafTilt = requestAnimationFrame(() => {
+      const nx = (e.clientX / window.innerWidth - 0.5);
+      const ny = (e.clientY / window.innerHeight - 0.5);
+      state.tiltX += (nx - state.tiltX) * 0.08;
+      state.tiltY += (ny - state.tiltY) * 0.08;
+      requestRender();
+    });
   });
-});
+}
 
 // ══════════════════════════════════════════
 //  CUSTOM CURSOR
