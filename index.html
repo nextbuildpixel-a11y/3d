@@ -150,29 +150,6 @@
       color: var(--gold-l);
     }
 
-    /* ── FIXED BACKGROUND 3D CANVAS ── */
-    #waffle-canvas, #hero-canvas, canvas {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      z-index: 1;
-      pointer-events: none;
-      display: block !important;
-      background: #0d0704;
-      transform: translate3d(0, 0, 0);
-      will-change: transform;
-      image-rendering: -webkit-optimize-contrast;
-    }
-    #canvas-vignette {
-      position: fixed;
-      inset: 0;
-      z-index: 1;
-      pointer-events: none;
-      background: radial-gradient(ellipse 80% 80% at 50% 50%, transparent 45%, rgba(13, 7, 4, 0.75) 100%);
-    }
-
     /* ── HEADER NAVBAR ── */
     #header {
       position: fixed;
@@ -244,25 +221,20 @@
     }
     .cart-count.on { transform: scale(1); }
 
-    /* ── HERO SCROLL TRACK (220vh — Smooth flow directly to menu) ── */
-    #hero-scroll {
-      height: 220vh;
-      position: relative;
-      z-index: 2;
-      pointer-events: none;
-      touch-action: pan-y;
-    }
-    .hero-sticky-overlay {
-      position: sticky;
-      top: 25vh;
+    /* ── CANVAS & HERO STICKY CONTAINER ── */
+    #hero-canvas, #waffle-canvas, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
       width: 100%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 0 20px;
-      background: transparent;
+      height: 100%;
+      pointer-events: none;
+      display: block !important;
+      background: #0d0704;
+      will-change: transform;
+      transform: translate3d(0, 0, 0);
+      backface-visibility: hidden;
+      image-rendering: -webkit-optimize-contrast;
     }
     .hero-tag {
       font-size: 11px;
@@ -756,10 +728,6 @@
     </div>
   </div>
 
-  <!-- FIXED 3D CANVAS & BACKGROUND -->
-  <canvas id="waffle-canvas"></canvas>
-  <div id="canvas-vignette"></div>
-
   <!-- HEADER -->
   <header id="header">
     <a href="#" id="logo">WAFFLE LAB<sup>™</sup></a>
@@ -776,15 +744,20 @@
     </div>
   </header>
 
-  <!-- 220VH HERO SCROLL TRACK (Balanced, natural flow into menu) -->
-  <div id="hero-scroll">
-    <div class="hero-sticky-overlay">
-      <div class="hero-tag">Zero-G Artisan Belgian Waffles</div>
-      <h1 class="hero-h1">The Future of<br>Waffle Craft</h1>
-      <p class="hero-sub">Scroll to scrub through our 3D golden Belgian waffle stack freshly made with pearl sugar.</p>
-      <div class="scroll-indicator">
-        <span>Scroll to Explore</span>
-        <div class="scroll-arrow"></div>
+  <!-- HERO SCROLL TRACK (CSS STICKY TRACK — 350VH) -->
+  <div id="hero-scroll-track" style="height: 350vh; position: relative;">
+    <div id="hero-sticky-container" style="position: sticky; top: 0; width: 100vw; height: 100vh; overflow: hidden; z-index: 1;">
+      <canvas id="hero-canvas"></canvas>
+      <div id="canvas-vignette" style="position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse 80% 80% at 50% 50%, transparent 45%, rgba(13, 7, 4, 0.75) 100%);"></div>
+      
+      <div class="hero-sticky-overlay" style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 20px; pointer-events: none;">
+        <div class="hero-tag">Zero-G Artisan Belgian Waffles</div>
+        <h1 class="hero-h1">The Future of<br>Waffle Craft</h1>
+        <p class="hero-sub">Scroll to scrub through our 3D golden Belgian waffle stack freshly made with pearl sugar.</p>
+        <div class="scroll-indicator">
+          <span>Scroll to Explore</span>
+          <div class="scroll-arrow"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -966,10 +939,10 @@
 
   <script>
     // ══════════════════════════════════════════
-    //  CANVAS 3D SEQUENCE ENGINE (ImageBitmap + Decoupled Lerp RAF)
+    //  CANVAS 3D SEQUENCE ENGINE (CSS STICKY + DIRTY CHECK)
     // ══════════════════════════════════════════
-    const canvas = document.getElementById('waffle-canvas');
-    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    const canvas = document.getElementById('hero-canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
     const TOTAL_FRAMES = 100;
     const pad = n => String(n).padStart(4, '0');
 
@@ -982,71 +955,57 @@
       return `frames/frames/frame_${pad(sourceIndex)}.png`;
     }
 
-    const frames = new Array(TOTAL_FRAMES);
-    let lastRenderedImg = null;
-    let currentFrame = 0;
+    const images = new Array(TOTAL_FRAMES);
     let targetFrame = 0;
-    let lastRenderedIndex = -1;
+    let lastDrawnFrame = -1;
 
-    // Clamp maximum canvas buffer width to 1920px to eliminate 2K/4K overdraw lag
     function resizeCanvas() {
-      const maxW = 1920;
-      const w = Math.min(window.innerWidth, maxW);
-      const h = Math.round(w * (window.innerHeight / window.innerWidth));
-      canvas.width = w;
-      canvas.height = h;
-      lastRenderedIndex = -1; // Force redraw on next frame
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      lastDrawnFrame = -1; // Trigger repaint
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    function getNearestFrame(idx) {
-      if (frames[idx]) return frames[idx];
+    function getNearestImage(idx) {
+      if (images[idx] && images[idx].complete && (images[idx].naturalWidth > 0 || images[idx].width > 0)) {
+        return images[idx];
+      }
       for (let offset = 1; offset < TOTAL_FRAMES; offset++) {
         const d = idx - offset, u = idx + offset;
-        if (d >= 0 && frames[d]) return frames[d];
-        if (u < TOTAL_FRAMES && frames[u]) return frames[u];
+        if (d >= 0 && images[d] && images[d].complete && (images[d].naturalWidth > 0 || images[d].width > 0)) {
+          return images[d];
+        }
+        if (u < TOTAL_FRAMES && images[u] && images[u].complete && (images[u].naturalWidth > 0 || images[u].width > 0)) {
+          return images[u];
+        }
       }
-      return lastRenderedImg;
+      return null;
     }
 
-    function drawCanvasFrame(index) {
-      const targetIdx = Math.min(Math.max(0, index), TOTAL_FRAMES - 1);
-      const img = getNearestFrame(targetIdx);
-      if (!img) return;
-      lastRenderedImg = img;
+    // ── LIGHTWEIGHT DIRTY-CHECK DRAW (ZERO IDLE GPU CHURN) ──
+    function renderLoop() {
+      if (targetFrame !== lastDrawnFrame) {
+        const img = getNearestImage(targetFrame);
+        if (img && img.complete && (img.naturalWidth > 0 || img.width > 0)) {
+          const imgW = img.naturalWidth || img.width;
+          const imgH = img.naturalHeight || img.height;
+          const scale = Math.max(canvas.width / imgW, canvas.height / imgH);
+          const drawW = imgW * scale;
+          const drawH = imgH * scale;
+          const drawX = (canvas.width - drawW) * 0.5;
+          const drawY = (canvas.height - drawH) * 0.5;
 
-      const imgW = img.width || img.naturalWidth;
-      const imgH = img.height || img.naturalHeight;
-      if (!imgW || !imgH) return;
-
-      const hRatio = canvas.width / imgW;
-      const vRatio = canvas.height / imgH;
-      const scale = Math.max(hRatio, vRatio);
-
-      const drawWidth = imgW * scale;
-      const drawHeight = imgH * scale;
-      const drawX = (canvas.width - drawWidth) * 0.5;
-      const drawY = (canvas.height - drawHeight) * 0.5;
-
-      ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
-    }
-
-    // ── DECOUPLED SMOOTH LERP RENDER LOOP (60 FPS) ──
-    function mainRenderLoop() {
-      requestAnimationFrame(mainRenderLoop);
-      // Smooth lerp interpolation to eliminate all scroll stutter
-      currentFrame += (targetFrame - currentFrame) * 0.25;
-      const frameIndex = Math.min(TOTAL_FRAMES - 1, Math.max(0, Math.round(currentFrame)));
-      if (frameIndex !== lastRenderedIndex) {
-        drawCanvasFrame(frameIndex);
-        lastRenderedIndex = frameIndex;
+          ctx.drawImage(img, drawX, drawY, drawW, drawH);
+          lastDrawnFrame = targetFrame;
+        }
       }
+      requestAnimationFrame(renderLoop);
     }
-    requestAnimationFrame(mainRenderLoop);
+    requestAnimationFrame(renderLoop);
 
     // ══════════════════════════════════════════
-    //  LUXURY "W" PRELOADER & ImageBitmap CACHING
+    //  LUXURY "W" PRELOADER & FRAME CACHING
     // ══════════════════════════════════════════
     const STATUS_MESSAGES = [
       "Preheating Belgian Iron...",
@@ -1058,7 +1017,7 @@
     const statusEl = document.getElementById('pl-status');
     const barEl = document.getElementById('pl-bar');
     const pctEl = document.getElementById('pl-pct');
-    let loadedFrameCount = 0;
+    let loadedCount = 0;
 
     const statusInterval = setInterval(() => {
       statusIdx = (statusIdx + 1) % STATUS_MESSAGES.length;
@@ -1074,75 +1033,39 @@
     }, 750);
 
     function updateProgress() {
-      const pct = Math.min(100, Math.round((loadedFrameCount / TOTAL_FRAMES) * 100));
+      const pct = Math.min(100, Math.round((loadedCount / TOTAL_FRAMES) * 100));
       if (barEl) barEl.style.width = pct + '%';
       if (pctEl) pctEl.textContent = pct + '%';
     }
 
-    // Off-thread asynchronous ImageBitmap decoding
-    async function loadDecodedFrame(index) {
-      const primaryUrl = getFramePath(index);
-      const fallbackUrl = getFallbackPath(index);
-
-      async function fetchAndDecode(url) {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        const blob = await response.blob();
-        if (typeof createImageBitmap === 'function') {
-          return await createImageBitmap(blob);
-        } else {
-          return new Promise((res, rej) => {
-            const img = new Image();
-            img.onload = () => res(img);
-            img.onerror = rej;
-            img.src = URL.createObjectURL(blob);
-          });
-        }
-      }
-
-      try {
-        return await fetchAndDecode(primaryUrl);
-      } catch (err) {
-        try {
-          return await fetchAndDecode(fallbackUrl);
-        } catch (err2) {
-          // Standard Image fallback
-          return new Promise(res => {
-            const img = new Image();
-            img.onload = () => res(img);
-            img.onerror = () => res(null);
-            img.src = primaryUrl;
-          });
-        }
-      }
-    }
-
-    // Preload & decode all 100 frames concurrently into GPU RAM
     const frameLoadingPromise = new Promise(resolve => {
       let finished = 0;
-      const CONCURRENCY = 10;
-      let nextIdx = 0;
-
-      async function worker() {
-        while (nextIdx < TOTAL_FRAMES) {
-          const idx = nextIdx++;
-          const decoded = await loadDecodedFrame(idx);
-          if (decoded) frames[idx] = decoded;
+      for (let i = 0; i < TOTAL_FRAMES; i++) {
+        const img = new Image();
+        let fallbackTried = false;
+        const onDone = () => {
           finished++;
-          loadedFrameCount++;
+          loadedCount++;
           updateProgress();
-          if (idx === 0 && decoded) {
-            lastRenderedImg = decoded;
-            drawCanvasFrame(0);
+          if (finished >= TOTAL_FRAMES) resolve();
+        };
+        img.onload = () => {
+          images[i] = img;
+          if (i === 0) lastDrawnFrame = -1;
+          onDone();
+        };
+        img.onerror = () => {
+          if (!fallbackTried) {
+            fallbackTried = true;
+            img.src = getFallbackPath(i);
+          } else {
+            onDone();
           }
-        }
-        if (finished >= TOTAL_FRAMES) resolve();
+        };
+        img.src = getFramePath(i);
       }
-
-      for (let c = 0; c < CONCURRENCY; c++) worker();
     });
 
-    // Luxury animation duration gate (2.6 seconds)
     const minTimerPromise = new Promise(resolve => setTimeout(resolve, 2600));
 
     Promise.all([frameLoadingPromise, minTimerPromise]).then(() => {
@@ -1174,22 +1097,22 @@
     });
 
     // ══════════════════════════════════════════
-    //  DECOUPLED SCROLLTRIGGER & LENIS INTEGRATION
+    //  LENIS + SCROLLTRIGGER (TAMED TRACKPAD INERTIA)
     // ══════════════════════════════════════════
     if (typeof Lenis !== 'undefined') {
       try {
         const lenis = new Lenis({
-          duration: 0.8,
-          easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-          smoothWheel: true,
-          wheelMultiplier: 0.8,
-          touchMultiplier: 1.2,
+          lerp: 0.1,
+          wheelMultiplier: 0.65,
+          touchMultiplier: 1.0,
           infinite: false
         });
         window.lenis = lenis;
         if (typeof ScrollTrigger !== 'undefined') lenis.on('scroll', ScrollTrigger.update);
         if (typeof gsap !== 'undefined') {
-          gsap.ticker.add(time => lenis.raf(time * 1000));
+          gsap.ticker.add((time) => {
+            lenis.raf(time * 1000);
+          });
           gsap.ticker.lagSmoothing(0);
         }
       } catch(e) {}
@@ -1199,23 +1122,24 @@
       try {
         gsap.registerPlugin(ScrollTrigger);
         ScrollTrigger.create({
-          trigger: '#hero-scroll',
+          trigger: '#hero-scroll-track',
           start: 'top top',
           end: 'bottom bottom',
-          scrub: true,
+          scrub: 0.1,
           onUpdate: (self) => {
-            targetFrame = self.progress * (TOTAL_FRAMES - 1);
+            const progress = Math.max(0, Math.min(1, self.progress));
+            targetFrame = Math.min(TOTAL_FRAMES - 1, Math.floor(progress * (TOTAL_FRAMES - 1)));
           }
         });
       } catch (e) { console.warn('GSAP init failed', e); }
     } else {
       window.addEventListener('scroll', () => {
-        const hs = document.getElementById('hero-scroll');
-        if (!hs) return;
-        const rect = hs.getBoundingClientRect();
-        const total = hs.offsetHeight - window.innerHeight;
+        const track = document.getElementById('hero-scroll-track');
+        if (!track) return;
+        const rect = track.getBoundingClientRect();
+        const total = track.offsetHeight - window.innerHeight;
         const progress = Math.max(0, Math.min(1, -rect.top / total));
-        targetFrame = progress * (TOTAL_FRAMES - 1);
+        targetFrame = Math.min(TOTAL_FRAMES - 1, Math.floor(progress * (TOTAL_FRAMES - 1)));
       }, { passive: true });
     }
 
