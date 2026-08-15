@@ -765,8 +765,11 @@ ctx.imageSmoothingEnabled = true;
 ctx.imageSmoothingQuality = 'high';
 
 const FRAME_COUNT = 300;
-const CRITICAL_FRAMES = 18; // First ~6% of frames needed for instant launch (< 1.5s)
-const frameSrc = i => `frames/frames/frame_${String(i + 1).padStart(4, '0')}.png`;
+const CRITICAL_FRAMES = 12; // Fast-start threshold for instant reveal
+const pad = n => String(n).padStart(4, '0');
+const frameSrc = i => `frames/frame_${pad(i + 1)}.png`;
+const fallbackSrc = i => `frames/frames/frame_${pad(i + 1)}.png`;
+
 const frames = new Array(FRAME_COUNT);
 const state = { frame: 0 };
 let loadedCount = 0;
@@ -834,7 +837,7 @@ function dismissPreloader() {
   requestRender();
   if (preloader) {
     preloader.classList.add('done');
-    setTimeout(() => { preloader.style.display = 'none'; }, 900);
+    setTimeout(() => { preloader.style.display = 'none'; }, 600);
   }
 }
 
@@ -862,19 +865,38 @@ function onFrameReady(index) {
     if (plBar) plBar.style.width = progress + '%';
     if (plPct) plPct.textContent = progress + '%';
   }
-  if (loadedCount === 1) requestRender();
+  // Instant First-Frame Paint
+  if (index === 0 || loadedCount === 1) {
+    requestRender();
+  }
   if (loadedCount >= CRITICAL_FRAMES && !isPreloaderDismissed) {
     dismissPreloader();
   }
 }
 
-// ── FAST-START: Load Critical First Batch (< 20 frames) immediately ──
-for (let i = 0; i < CRITICAL_FRAMES; i++) {
+function loadImageWithFallback(index, onComplete) {
   const img = new Image();
-  img.onload = () => { onFrameReady(i); };
-  img.onerror = () => { onFrameReady(i); };
-  img.src = frameSrc(i);
-  frames[i] = img;
+  let triedFallback = false;
+  img.onload = () => {
+    onFrameReady(index);
+    if (onComplete) onComplete();
+  };
+  img.onerror = () => {
+    if (!triedFallback) {
+      triedFallback = true;
+      img.src = fallbackSrc(index);
+    } else {
+      onFrameReady(index);
+      if (onComplete) onComplete();
+    }
+  };
+  img.src = frameSrc(index);
+  frames[index] = img;
+}
+
+// ── FAST-START: Load Critical First Batch immediately ──
+for (let i = 0; i < CRITICAL_FRAMES; i++) {
+  loadImageWithFallback(i);
 }
 
 // ── BACKGROUND STREAM: Stream Remaining Frames concurrently ──
@@ -885,17 +907,9 @@ function streamRemainingFrames() {
   function loadNext() {
     if (nextIdx >= FRAME_COUNT) return;
     const current = nextIdx++;
-    const img = new Image();
-    img.onload = () => {
-      onFrameReady(current);
+    loadImageWithFallback(current, () => {
       loadNext();
-    };
-    img.onerror = () => {
-      onFrameReady(current);
-      loadNext();
-    };
-    img.src = frameSrc(current);
-    frames[current] = img;
+    });
   }
 
   for (let c = 0; c < CONCURRENCY; c++) {
@@ -903,15 +917,15 @@ function streamRemainingFrames() {
   }
 }
 
-// Start streaming remaining frames after first batch begins
-setTimeout(streamRemainingFrames, 100);
+// Start streaming remaining frames
+setTimeout(streamRemainingFrames, 80);
 
-// ── SAFETY TIMEOUT: Force-dismiss preloader after 2.5s regardless of network ──
+// ── SAFETY TIMEOUT: Force-dismiss preloader after 2.0s regardless of network status ──
 setTimeout(() => {
   if (!isPreloaderDismissed) {
     dismissPreloader();
   }
-}, 2500);
+}, 2000);
 
 window.addEventListener('resize', () => { resizeCanvas(); });
 
