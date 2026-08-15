@@ -51,14 +51,8 @@ body.cursor-hover #cursor-ring{width:56px;height:56px;border-color:var(--gold-l)
 @keyframes pulseLine{0%{transform:scaleY(0);transform-origin:top}50%{transform:scaleY(1);transform-origin:top}100%{transform:scaleY(1);transform-origin:bottom;opacity:0}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
 
-/* ── PRELOADER ── */
-#preloader{position:fixed;inset:0;z-index:800;background:var(--bg0);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;transition:opacity .5s ease,visibility .5s ease}
-#preloader.done{opacity:0 !important;pointer-events:none !important;visibility:hidden}
-#pl-brand{font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;color:var(--gold);text-align:center}
-#pl-sub{font-size:10px;letter-spacing:5px;text-transform:uppercase;color:var(--cr2)}
-#pl-bar-bg{width:240px;height:1px;background:rgba(255,255,255,.07);border-radius:1px;overflow:hidden}
-#pl-bar{height:100%;width:0;background:linear-gradient(to right,var(--gold-d),var(--gold-l));transition:width .15s linear}
-#pl-pct{font-size:11px;letter-spacing:3px;color:var(--cr4)}
+/* ── PRELOADER (NON-BLOCKING / REMOVED) ── */
+#preloader{display:none !important;opacity:0 !important;pointer-events:none !important;visibility:hidden !important}
 
 /* ── DISCOUNT BANNER ── */
 #disc-banner{position:fixed;top:0;left:0;right:0;z-index:700;background:linear-gradient(90deg,var(--gold-d),var(--gold),var(--gold-d));padding:9px 20px;display:flex;align-items:center;justify-content:center;gap:12px;font-size:12px;font-weight:600;color:var(--bg0);letter-spacing:.5px;transform:translateY(0);transition:transform .4s ease}
@@ -896,19 +890,14 @@ function initScrollScrub() {
   }
 }
 
+// Start scrub engine immediately for instant interaction
+initScrollScrub();
+
 function onFrameReady(index) {
   loadedCount++;
-  if (!isPreloaderDismissed) {
-    const progress = Math.min(100, Math.round((loadedCount / CRITICAL_FRAMES) * 100));
-    if (plBar) plBar.style.width = progress + '%';
-    if (plPct) plPct.textContent = progress + '%';
-  }
   // Instant First-Frame Paint
   if (index === 0 || loadedCount === 1) {
     requestRender();
-  }
-  if (loadedCount >= CRITICAL_FRAMES && !isPreloaderDismissed) {
-    hidePreloader();
   }
 }
 
@@ -932,15 +921,15 @@ function loadImageWithFallback(index, onComplete) {
   frames[index] = img;
 }
 
-// ── FAST-START: Load Critical First Batch immediately ──
-for (let i = 0; i < CRITICAL_FRAMES; i++) {
+// ── FAST-START: Load first 10 frames immediately ──
+for (let i = 0; i < 10; i++) {
   loadImageWithFallback(i);
 }
 
 // ── BACKGROUND STREAM: Stream Remaining Frames concurrently ──
 function streamRemainingFrames() {
-  const CONCURRENCY = 6;
-  let nextIdx = CRITICAL_FRAMES;
+  const CONCURRENCY = 8;
+  let nextIdx = 10;
 
   function loadNext() {
     if (nextIdx >= FRAME_COUNT) return;
@@ -955,13 +944,8 @@ function streamRemainingFrames() {
   }
 }
 
-// Start streaming remaining frames
-setTimeout(streamRemainingFrames, 80);
-
-// ── HARD FAILSAFE TIMEOUT: Force-dismiss preloader after 1.2s regardless of image load status ──
-setTimeout(() => {
-  hidePreloader();
-}, 1200);
+// Stream remaining frames in background
+setTimeout(streamRemainingFrames, 50);
 
 window.addEventListener('resize', () => { resizeCanvas(); });
 
