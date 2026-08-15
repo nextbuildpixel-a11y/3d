@@ -52,8 +52,8 @@ body.cursor-hover #cursor-ring{width:56px;height:56px;border-color:var(--gold-l)
 @keyframes fadeUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
 
 /* ── PRELOADER ── */
-#preloader{position:fixed;inset:0;z-index:800;background:var(--bg0);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;transition:opacity 1s ease}
-#preloader.done{opacity:0;pointer-events:none}
+#preloader{position:fixed;inset:0;z-index:800;background:var(--bg0);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;transition:opacity .5s ease,visibility .5s ease}
+#preloader.done{opacity:0 !important;pointer-events:none !important;visibility:hidden}
 #pl-brand{font-family:'Playfair Display',serif;font-size:2.4rem;letter-spacing:6px;color:var(--gold);text-align:center}
 #pl-sub{font-size:10px;letter-spacing:5px;text-transform:uppercase;color:var(--cr2)}
 #pl-bar-bg{width:240px;height:1px;background:rgba(255,255,255,.07);border-radius:1px;overflow:hidden}
@@ -765,7 +765,7 @@ ctx.imageSmoothingEnabled = true;
 ctx.imageSmoothingQuality = 'high';
 
 const FRAME_COUNT = 300;
-const CRITICAL_FRAMES = 12; // Fast-start threshold for instant reveal
+const CRITICAL_FRAMES = 8; // Fast-start: reveal site immediately after first few frames
 const pad = n => String(n).padStart(4, '0');
 const frameSrc = i => `frames/frame_${pad(i + 1)}.png`;
 const fallbackSrc = i => `frames/frames/frame_${pad(i + 1)}.png`;
@@ -830,16 +830,19 @@ function requestRender() {
   }
 }
 
-function dismissPreloader() {
+function hidePreloader() {
   if (isPreloaderDismissed) return;
   isPreloaderDismissed = true;
   if (!scrollScrubInitialized) initScrollScrub();
   requestRender();
   if (preloader) {
     preloader.classList.add('done');
-    setTimeout(() => { preloader.style.display = 'none'; }, 600);
+    preloader.style.opacity = '0';
+    preloader.style.pointerEvents = 'none';
+    setTimeout(() => { preloader.style.display = 'none'; }, 500);
   }
 }
+window.hidePreloader = hidePreloader;
 
 function initScrollScrub() {
   if (scrollScrubInitialized) return;
@@ -870,7 +873,7 @@ function onFrameReady(index) {
     requestRender();
   }
   if (loadedCount >= CRITICAL_FRAMES && !isPreloaderDismissed) {
-    dismissPreloader();
+    hidePreloader();
   }
 }
 
@@ -923,7 +926,7 @@ setTimeout(streamRemainingFrames, 80);
 // ── SAFETY TIMEOUT: Force-dismiss preloader after 2.0s regardless of network status ──
 setTimeout(() => {
   if (!isPreloaderDismissed) {
-    dismissPreloader();
+    hidePreloader();
   }
 }, 2000);
 
