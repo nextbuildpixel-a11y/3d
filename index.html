@@ -186,8 +186,7 @@
       align-items: center;
       justify-content: space-between;
       transition: background 0.4s, border-color 0.4s;
-      background: rgba(13, 7, 4, 0.85);
-      backdrop-filter: blur(16px);
+      background: rgba(13, 7, 4, 0.94);
       border-bottom: 1px solid var(--bdr);
     }
     #logo {
@@ -576,8 +575,7 @@
     #cart-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(8px);
+      background: rgba(0, 0, 0, 0.82);
       z-index: 500;
       opacity: 0;
       pointer-events: none;
@@ -671,7 +669,7 @@
       overflow-y: auto;
     }
     #checkout-modal.on { opacity: 1; pointer-events: all; }
-    .modal-bg { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(10px); }
+    .modal-bg { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.88); }
     .modal-box {
       position: relative;
       z-index: 1;
@@ -971,7 +969,7 @@
     //  CANVAS 3D SEQUENCE ENGINE (100 FRAMES)
     // ══════════════════════════════════════════
     const canvas = document.getElementById('waffle-canvas');
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     const TOTAL_FRAMES = 100;
     const pad = n => String(n).padStart(4, '0');
 
@@ -1040,9 +1038,6 @@
       lastDrawnIndex = targetIdx;
       lastDrawTime = now;
       lastRenderedImg = img;
-
-      // Fast clear & draw without heavy blending
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const hRatio = canvas.width / img.naturalWidth;
       const vRatio = canvas.height / img.naturalHeight;
@@ -1154,24 +1149,41 @@
     });
 
     // ══════════════════════════════════════════
-    //  GSAP + LENIS SMOOTH SCROLL ENGINE
+    //  LENIS + SCROLLTRIGGER (ZERO FIGHTING / 0.1S HARDWARE SCRUB)
     // ══════════════════════════════════════════
-    const isMobile = window.innerWidth < 768;
-    const scrubDamping = isMobile ? 0.6 : 0.4;
+    if (typeof Lenis !== 'undefined') {
+      try {
+        const lenis = new Lenis({
+          duration: 0.8,
+          easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+          smoothWheel: true,
+          wheelMultiplier: 0.8,
+          touchMultiplier: 1.2,
+          infinite: false
+        });
+        window.lenis = lenis;
+        if (typeof ScrollTrigger !== 'undefined') lenis.on('scroll', ScrollTrigger.update);
+        if (typeof gsap !== 'undefined') {
+          gsap.ticker.add(time => lenis.raf(time * 1000));
+          gsap.ticker.lagSmoothing(0);
+        }
+      } catch(e) {}
+    }
 
     if (typeof gsap !== 'undefined' && typeof ScrollTrigger !== 'undefined') {
       try {
         gsap.registerPlugin(ScrollTrigger);
-        gsap.to(frameTrack, {
-          frame: TOTAL_FRAMES - 1,
-          snap: 'frame',
-          ease: 'none',
-          scrollTrigger: {
-            trigger: '#hero-scroll',
-            start: 'top top',
-            end: 'bottom bottom',
-            scrub: scrubDamping,
-            onUpdate: () => scheduleRender(Math.round(frameTrack.frame))
+        ScrollTrigger.create({
+          trigger: '#hero-scroll',
+          start: 'top top',
+          end: 'bottom bottom',
+          scrub: 0.1,
+          onUpdate: (self) => {
+            const frameIndex = Math.min(
+              TOTAL_FRAMES - 1,
+              Math.max(0, Math.floor(self.progress * (TOTAL_FRAMES - 1)))
+            );
+            scheduleRender(frameIndex);
           }
         });
       } catch (e) { console.warn('GSAP init failed', e); }
@@ -1182,21 +1194,9 @@
         const rect = hs.getBoundingClientRect();
         const total = hs.offsetHeight - window.innerHeight;
         const progress = Math.max(0, Math.min(1, -rect.top / total));
-        frameTrack.frame = progress * (TOTAL_FRAMES - 1);
-        scheduleRender(Math.round(frameTrack.frame));
+        const frameIndex = Math.min(TOTAL_FRAMES - 1, Math.max(0, Math.floor(progress * (TOTAL_FRAMES - 1))));
+        scheduleRender(frameIndex);
       }, { passive: true });
-    }
-
-    if (typeof Lenis !== 'undefined') {
-      try {
-        const lenis = new Lenis({ lerp: 0.08, smoothWheel: true });
-        window.lenis = lenis;
-        if (typeof ScrollTrigger !== 'undefined') lenis.on('scroll', ScrollTrigger.update);
-        if (typeof gsap !== 'undefined') {
-          gsap.ticker.add(time => lenis.raf(time * 1000));
-          gsap.ticker.lagSmoothing(0);
-        }
-      } catch(e) {}
     }
 
     // ══════════════════════════════════════════
