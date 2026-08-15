@@ -988,13 +988,16 @@
     const frameTrack = { frame: 0 };
     let lastRenderedImg = null;
     let targetFrame = 0;
-    let renderedFrame = -1;
     let isRendering = false;
+    let lastDrawnIndex = -1;
+    let lastDrawTime = 0;
+    const targetFPS = 30;
+    const frameInterval = 1000 / targetFPS; // ~33.3ms per frame
 
     function resizeCanvas() {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      renderFrame(renderedFrame >= 0 ? renderedFrame : 0);
+      renderFrame(lastDrawnIndex >= 0 ? lastDrawnIndex : 0, true);
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
@@ -1008,10 +1011,7 @@
     }
 
     function renderLoop() {
-      if (targetFrame !== renderedFrame) {
-        renderFrame(targetFrame);
-        renderedFrame = targetFrame;
-      }
+      renderFrame(targetFrame);
       isRendering = false;
     }
 
@@ -1025,23 +1025,35 @@
       return lastRenderedImg;
     }
 
-    function renderFrame(index) {
+    function renderFrame(index, force = false) {
+      const now = performance.now();
       const targetIdx = Math.min(Math.max(0, Math.round(index)), TOTAL_FRAMES - 1);
+
+      // Throttle to 30 FPS and ignore duplicate frames
+      if (!force && (targetIdx === lastDrawnIndex || now - lastDrawTime < frameInterval)) {
+        return;
+      }
+
       const img = getNearestFrame(targetIdx);
       if (!img || !img.complete || !img.naturalWidth) return;
+
+      lastDrawnIndex = targetIdx;
+      lastDrawTime = now;
       lastRenderedImg = img;
+
+      // Fast clear & draw without heavy blending
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const hRatio = canvas.width / img.naturalWidth;
       const vRatio = canvas.height / img.naturalHeight;
       const scale = Math.max(hRatio, vRatio);
 
-      const dw = img.naturalWidth * scale;
-      const dh = img.naturalHeight * scale;
-      const dx = (canvas.width - dw) / 2;
-      const dy = (canvas.height - dh) / 2;
+      const drawWidth = img.naturalWidth * scale;
+      const drawHeight = img.naturalHeight * scale;
+      const drawX = (canvas.width - drawWidth) * 0.5;
+      const drawY = (canvas.height - drawHeight) * 0.5;
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, dx, dy, dw, dh);
+      ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
     }
 
     // ══════════════════════════════════════════
