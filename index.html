@@ -34,11 +34,11 @@ button{cursor:pointer;font-family:'Inter',sans-serif}
 select,input,textarea{font-family:'Inter',sans-serif}
 
 /* ── CURSOR ── */
-#cursor-dot{position:fixed;top:0;left:0;width:10px;height:10px;background:var(--gold-l);border-radius:50%;pointer-events:none;z-index:9999;transform:translate(-50%,-50%);transition:transform .12s ease,width .25s,height .25s,background .25s;mix-blend-mode:exclusion}
-#cursor-ring{position:fixed;top:0;left:0;width:38px;height:38px;border:1.5px solid rgba(245,158,11,.5);border-radius:50%;pointer-events:none;z-index:9998;transform:translate(-50%,-50%);transition:transform .25s ease,width .3s,height .3s,border-color .3s}
+#cursor-dot{position:fixed;top:0;left:0;width:10px;height:10px;background:var(--gold-l);border-radius:50%;pointer-events:none;z-index:9999;transition:width .25s,height .25s,background .25s,opacity .3s;mix-blend-mode:exclusion;opacity:0;will-change:transform}
+#cursor-ring{position:fixed;top:0;left:0;width:38px;height:38px;border:1.5px solid rgba(245,158,11,.5);border-radius:50%;pointer-events:none;z-index:9998;transition:width .3s,height .3s,border-color .3s,opacity .3s;opacity:0;will-change:transform}
 body.cursor-hover #cursor-dot{width:6px;height:6px;background:var(--gold-ll)}
 body.cursor-hover #cursor-ring{width:56px;height:56px;border-color:var(--gold-l);background:rgba(245,158,11,.06)}
-@media(pointer:coarse){#cursor-dot,#cursor-ring{display:none}}
+@media(pointer:coarse){#cursor-dot,#cursor-ring{display:none !important}}
 
 /* ── CANVAS HERO ── */
 #hero-wrap{height:600vh;position:relative;background:#120a05}
@@ -702,16 +702,34 @@ textarea.form-ctrl{resize:none;height:80px}
 <script src="https://cdn.jsdelivr.net/npm/@studio-freight/lenis@1.0.42/dist/lenis.min.js"></script>
 <script>
 // ══════════════════════════════════════════
-//  LENIS + GSAP
+//  SAFE GSAP & LENIS INITIALIZATION
 // ══════════════════════════════════════════
-gsap.registerPlugin(ScrollTrigger);
-const lenis = new Lenis({ lerp: 0.08, smoothWheel: true });
-window.lenis = lenis;
-lenis.on('scroll', ScrollTrigger.update);
-gsap.ticker.add((time) => {
-  lenis.raf(time * 1000);
-});
-gsap.ticker.lagSmoothing(0);
+if (typeof gsap !== 'undefined' && typeof ScrollTrigger !== 'undefined') {
+  try {
+    gsap.registerPlugin(ScrollTrigger);
+  } catch (e) {
+    console.warn('ScrollTrigger register failed', e);
+  }
+}
+
+let lenis = null;
+if (typeof Lenis !== 'undefined') {
+  try {
+    lenis = new Lenis({ lerp: 0.08, smoothWheel: true });
+    window.lenis = lenis;
+    if (typeof ScrollTrigger !== 'undefined') {
+      lenis.on('scroll', ScrollTrigger.update);
+    }
+    if (typeof gsap !== 'undefined') {
+      gsap.ticker.add((time) => {
+        lenis.raf(time * 1000);
+      });
+      gsap.ticker.lagSmoothing(0);
+    }
+  } catch (e) {
+    console.warn('Lenis initialization failed, using native scroll', e);
+  }
+}
 
 // ══════════════════════════════════════════
 //  SMOOTH ANCHOR NAVIGATION ENGINE
@@ -847,18 +865,35 @@ window.hidePreloader = hidePreloader;
 function initScrollScrub() {
   if (scrollScrubInitialized) return;
   scrollScrubInitialized = true;
-  gsap.to(state, {
-    frame: FRAME_COUNT - 1,
-    snap: 'frame',
-    ease: 'none',
-    scrollTrigger: {
-      trigger: '#hero-wrap',
-      scrub: 0.5,
-      start: 'top top',
-      end: 'bottom bottom'
-    },
-    onUpdate: requestRender
-  });
+  if (typeof gsap !== 'undefined' && typeof ScrollTrigger !== 'undefined') {
+    try {
+      gsap.to(state, {
+        frame: FRAME_COUNT - 1,
+        snap: 'frame',
+        ease: 'none',
+        scrollTrigger: {
+          trigger: '#hero-wrap',
+          scrub: 0.5,
+          start: 'top top',
+          end: 'bottom bottom'
+        },
+        onUpdate: requestRender
+      });
+    } catch (e) {
+      console.warn('GSAP ScrollTrigger init failed, falling back to scroll listener', e);
+    }
+  } else {
+    // Native scroll fallback
+    window.addEventListener('scroll', () => {
+      const hero = document.getElementById('hero-wrap');
+      if (!hero) return;
+      const rect = hero.getBoundingClientRect();
+      const total = hero.offsetHeight - window.innerHeight;
+      const progress = Math.max(0, Math.min(1, -rect.top / total));
+      state.frame = progress * (FRAME_COUNT - 1);
+      requestRender();
+    }, { passive: true });
+  }
 }
 
 function onFrameReady(index) {
@@ -923,29 +958,46 @@ function streamRemainingFrames() {
 // Start streaming remaining frames
 setTimeout(streamRemainingFrames, 80);
 
-// ── SAFETY TIMEOUT: Force-dismiss preloader after 2.0s regardless of network status ──
+// ── HARD FAILSAFE TIMEOUT: Force-dismiss preloader after 1.2s regardless of image load status ──
 setTimeout(() => {
-  if (!isPreloaderDismissed) {
-    hidePreloader();
-  }
-}, 2000);
+  hidePreloader();
+}, 1200);
 
 window.addEventListener('resize', () => { resizeCanvas(); });
 
 // ══════════════════════════════════════════
-//  CUSTOM CURSOR
+//  CUSTOM CURSOR (SMOOTH & ACTIVE ONLY ON MOUSEMOVE)
 // ══════════════════════════════════════════
 const dot = document.getElementById('cursor-dot');
 const ring = document.getElementById('cursor-ring');
-let mx = -100, my = -100, rx = -100, ry = -100;
-document.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+let mx = -200, my = -200, rx = -200, ry = -200;
+let cursorActive = false;
+
+window.addEventListener('mousemove', e => {
+  mx = e.clientX;
+  my = e.clientY;
+  if (!cursorActive) {
+    cursorActive = true;
+    rx = mx;
+    ry = my;
+    if (dot) dot.style.opacity = '1';
+    if (ring) ring.style.opacity = '1';
+  }
+  if (dot) {
+    dot.style.transform = `translate3d(${mx}px, ${my}px, 0) translate(-50%, -50%)`;
+  }
+});
+
 (function animCursor() {
   requestAnimationFrame(animCursor);
-  rx += (mx - rx) * 0.14;
-  ry += (my - ry) * 0.14;
-  dot.style.left = mx + 'px'; dot.style.top = my + 'px';
-  ring.style.left = rx + 'px'; ring.style.top = ry + 'px';
+  if (!cursorActive) return;
+  rx += (mx - rx) * 0.18;
+  ry += (my - ry) * 0.18;
+  if (ring) {
+    ring.style.transform = `translate3d(${rx}px, ${ry}px, 0) translate(-50%, -50%)`;
+  }
 })();
+
 document.querySelectorAll('button,a,.ftab,.sopt,.pay-opt,.pcard,.ocard').forEach(el => {
   el.addEventListener('mouseenter', () => document.body.classList.add('cursor-hover'));
   el.addEventListener('mouseleave', () => document.body.classList.remove('cursor-hover'));
