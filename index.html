@@ -966,7 +966,7 @@
 
   <script>
     // ══════════════════════════════════════════
-    //  CANVAS 3D SEQUENCE ENGINE (100 FRAMES)
+    //  CANVAS 3D SEQUENCE ENGINE (ImageBitmap + Decoupled Lerp RAF)
     // ══════════════════════════════════════════
     const canvas = document.getElementById('waffle-canvas');
     const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
@@ -983,76 +983,70 @@
     }
 
     const frames = new Array(TOTAL_FRAMES);
-    const frameTrack = { frame: 0 };
     let lastRenderedImg = null;
+    let currentFrame = 0;
     let targetFrame = 0;
-    let isRendering = false;
-    let lastDrawnIndex = -1;
-    let lastDrawTime = 0;
-    const targetFPS = 30;
-    const frameInterval = 1000 / targetFPS; // ~33.3ms per frame
+    let lastRenderedIndex = -1;
 
+    // Clamp maximum canvas buffer width to 1920px to eliminate 2K/4K overdraw lag
     function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      renderFrame(lastDrawnIndex >= 0 ? lastDrawnIndex : 0, true);
+      const maxW = 1920;
+      const w = Math.min(window.innerWidth, maxW);
+      const h = Math.round(w * (window.innerHeight / window.innerWidth));
+      canvas.width = w;
+      canvas.height = h;
+      lastRenderedIndex = -1; // Force redraw on next frame
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    function scheduleRender(frameIndex) {
-      targetFrame = Math.max(0, Math.min(TOTAL_FRAMES - 1, frameIndex));
-      if (!isRendering) {
-        isRendering = true;
-        requestAnimationFrame(renderLoop);
-      }
-    }
-
-    function renderLoop() {
-      renderFrame(targetFrame);
-      isRendering = false;
-    }
-
     function getNearestFrame(idx) {
-      if (frames[idx] && frames[idx].complete && frames[idx].naturalWidth) return frames[idx];
+      if (frames[idx]) return frames[idx];
       for (let offset = 1; offset < TOTAL_FRAMES; offset++) {
         const d = idx - offset, u = idx + offset;
-        if (d >= 0 && frames[d] && frames[d].complete && frames[d].naturalWidth) return frames[d];
-        if (u < TOTAL_FRAMES && frames[u] && frames[u].complete && frames[u].naturalWidth) return frames[u];
+        if (d >= 0 && frames[d]) return frames[d];
+        if (u < TOTAL_FRAMES && frames[u]) return frames[u];
       }
       return lastRenderedImg;
     }
 
-    function renderFrame(index, force = false) {
-      const now = performance.now();
-      const targetIdx = Math.min(Math.max(0, Math.round(index)), TOTAL_FRAMES - 1);
-
-      // Throttle to 30 FPS and ignore duplicate frames
-      if (!force && (targetIdx === lastDrawnIndex || now - lastDrawTime < frameInterval)) {
-        return;
-      }
-
+    function drawCanvasFrame(index) {
+      const targetIdx = Math.min(Math.max(0, index), TOTAL_FRAMES - 1);
       const img = getNearestFrame(targetIdx);
-      if (!img || !img.complete || !img.naturalWidth) return;
-
-      lastDrawnIndex = targetIdx;
-      lastDrawTime = now;
+      if (!img) return;
       lastRenderedImg = img;
 
-      const hRatio = canvas.width / img.naturalWidth;
-      const vRatio = canvas.height / img.naturalHeight;
+      const imgW = img.width || img.naturalWidth;
+      const imgH = img.height || img.naturalHeight;
+      if (!imgW || !imgH) return;
+
+      const hRatio = canvas.width / imgW;
+      const vRatio = canvas.height / imgH;
       const scale = Math.max(hRatio, vRatio);
 
-      const drawWidth = img.naturalWidth * scale;
-      const drawHeight = img.naturalHeight * scale;
+      const drawWidth = imgW * scale;
+      const drawHeight = imgH * scale;
       const drawX = (canvas.width - drawWidth) * 0.5;
       const drawY = (canvas.height - drawHeight) * 0.5;
 
       ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
     }
 
+    // ── DECOUPLED SMOOTH LERP RENDER LOOP (60 FPS) ──
+    function mainRenderLoop() {
+      requestAnimationFrame(mainRenderLoop);
+      // Smooth lerp interpolation to eliminate all scroll stutter
+      currentFrame += (targetFrame - currentFrame) * 0.25;
+      const frameIndex = Math.min(TOTAL_FRAMES - 1, Math.max(0, Math.round(currentFrame)));
+      if (frameIndex !== lastRenderedIndex) {
+        drawCanvasFrame(frameIndex);
+        lastRenderedIndex = frameIndex;
+      }
+    }
+    requestAnimationFrame(mainRenderLoop);
+
     // ══════════════════════════════════════════
-    //  LUXURY "W" PRELOADER & RAM FRAME CACHING
+    //  LUXURY "W" PRELOADER & ImageBitmap CACHING
     // ══════════════════════════════════════════
     const STATUS_MESSAGES = [
       "Preheating Belgian Iron...",
@@ -1085,36 +1079,67 @@
       if (pctEl) pctEl.textContent = pct + '%';
     }
 
-    // Preload all 100 frames into RAM
+    // Off-thread asynchronous ImageBitmap decoding
+    async function loadDecodedFrame(index) {
+      const primaryUrl = getFramePath(index);
+      const fallbackUrl = getFallbackPath(index);
+
+      async function fetchAndDecode(url) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const blob = await response.blob();
+        if (typeof createImageBitmap === 'function') {
+          return await createImageBitmap(blob);
+        } else {
+          return new Promise((res, rej) => {
+            const img = new Image();
+            img.onload = () => res(img);
+            img.onerror = rej;
+            img.src = URL.createObjectURL(blob);
+          });
+        }
+      }
+
+      try {
+        return await fetchAndDecode(primaryUrl);
+      } catch (err) {
+        try {
+          return await fetchAndDecode(fallbackUrl);
+        } catch (err2) {
+          // Standard Image fallback
+          return new Promise(res => {
+            const img = new Image();
+            img.onload = () => res(img);
+            img.onerror = () => res(null);
+            img.src = primaryUrl;
+          });
+        }
+      }
+    }
+
+    // Preload & decode all 100 frames concurrently into GPU RAM
     const frameLoadingPromise = new Promise(resolve => {
       let finished = 0;
-      for (let i = 0; i < TOTAL_FRAMES; i++) {
-        const img = new Image();
-        let fallbackTried = false;
-        const onDone = () => {
+      const CONCURRENCY = 10;
+      let nextIdx = 0;
+
+      async function worker() {
+        while (nextIdx < TOTAL_FRAMES) {
+          const idx = nextIdx++;
+          const decoded = await loadDecodedFrame(idx);
+          if (decoded) frames[idx] = decoded;
           finished++;
           loadedFrameCount++;
           updateProgress();
-          if (finished >= TOTAL_FRAMES) resolve();
-        };
-        img.onload = () => {
-          frames[i] = img;
-          if (i === 0) {
-            lastRenderedImg = img;
-            scheduleRender(0);
+          if (idx === 0 && decoded) {
+            lastRenderedImg = decoded;
+            drawCanvasFrame(0);
           }
-          onDone();
-        };
-        img.onerror = () => {
-          if (!fallbackTried) {
-            fallbackTried = true;
-            img.src = getFallbackPath(i);
-          } else {
-            onDone();
-          }
-        };
-        img.src = getFramePath(i);
+        }
+        if (finished >= TOTAL_FRAMES) resolve();
       }
+
+      for (let c = 0; c < CONCURRENCY; c++) worker();
     });
 
     // Luxury animation duration gate (2.6 seconds)
@@ -1149,7 +1174,7 @@
     });
 
     // ══════════════════════════════════════════
-    //  LENIS + SCROLLTRIGGER (ZERO FIGHTING / 0.1S HARDWARE SCRUB)
+    //  DECOUPLED SCROLLTRIGGER & LENIS INTEGRATION
     // ══════════════════════════════════════════
     if (typeof Lenis !== 'undefined') {
       try {
@@ -1177,13 +1202,9 @@
           trigger: '#hero-scroll',
           start: 'top top',
           end: 'bottom bottom',
-          scrub: 0.1,
+          scrub: true,
           onUpdate: (self) => {
-            const frameIndex = Math.min(
-              TOTAL_FRAMES - 1,
-              Math.max(0, Math.floor(self.progress * (TOTAL_FRAMES - 1)))
-            );
-            scheduleRender(frameIndex);
+            targetFrame = self.progress * (TOTAL_FRAMES - 1);
           }
         });
       } catch (e) { console.warn('GSAP init failed', e); }
@@ -1194,8 +1215,7 @@
         const rect = hs.getBoundingClientRect();
         const total = hs.offsetHeight - window.innerHeight;
         const progress = Math.max(0, Math.min(1, -rect.top / total));
-        const frameIndex = Math.min(TOTAL_FRAMES - 1, Math.max(0, Math.floor(progress * (TOTAL_FRAMES - 1))));
-        scheduleRender(frameIndex);
+        targetFrame = progress * (TOTAL_FRAMES - 1);
       }, { passive: true });
     }
 
