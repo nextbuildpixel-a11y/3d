@@ -41,8 +41,8 @@ body.cursor-hover #cursor-ring{width:56px;height:56px;border-color:var(--gold-l)
 @media(pointer:coarse){#cursor-dot,#cursor-ring{display:none !important}}
 
 /* ── CANVAS HERO ── */
-#hero-wrap{height:600vh;position:relative;background:#120a05}
-#canvas{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:0;display:block;background:#120a05}
+#hero-wrap{height:500vh;position:relative;background:transparent}
+#canvas,#hero-canvas,canvas{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:0;pointer-events:none;display:block !important;background:#120a05}
 #vignette{position:fixed;inset:0;z-index:1;pointer-events:none;background:radial-gradient(ellipse 80% 80% at 50% 50%,transparent 45%,rgba(18,10,5,.65) 100%)}
 #hero-overlay{position:fixed;inset:0;z-index:2;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6vh}
 #scroll-cue{display:flex;flex-direction:column;align-items:center;gap:10px;opacity:0;animation:fadeUp 1s ease 2.8s forwards}
@@ -921,8 +921,21 @@ function loadImageWithFallback(index, onComplete) {
   frames[index] = img;
 }
 
+// ── LOAD FIRST FRAME IMMEDIATELY ──
+const firstFrame = new Image();
+firstFrame.onload = () => {
+  frames[0] = firstFrame;
+  lastRenderedImg = firstFrame;
+  drawFrame();
+  if (typeof ScrollTrigger !== 'undefined') ScrollTrigger.refresh();
+};
+firstFrame.onerror = () => {
+  firstFrame.src = fallbackSrc(0);
+};
+firstFrame.src = frameSrc(0);
+
 // ── FAST-START: Load first 10 frames immediately ──
-for (let i = 0; i < 10; i++) {
+for (let i = 1; i < 10; i++) {
   loadImageWithFallback(i);
 }
 
