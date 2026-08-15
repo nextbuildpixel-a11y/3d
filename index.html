@@ -41,10 +41,9 @@ body.cursor-hover #cursor-ring{width:56px;height:56px;border-color:var(--gold-l)
 @media(pointer:coarse){#cursor-dot,#cursor-ring{display:none}}
 
 /* ── CANVAS HERO ── */
-#hero-wrap{height:600vh;position:relative}
-#canvas{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:0;display:block}
-#vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
-  background:radial-gradient(ellipse 80% 80% at 50% 50%,transparent 40%,rgba(10,6,3,.75) 100%)}
+#hero-wrap{height:600vh;position:relative;background:#120a05}
+#canvas{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:0;display:block;background:#120a05}
+#vignette{position:fixed;inset:0;z-index:1;pointer-events:none;background:radial-gradient(ellipse 80% 80% at 50% 50%,transparent 45%,rgba(18,10,5,.65) 100%)}
 #hero-overlay{position:fixed;inset:0;z-index:2;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6vh}
 #scroll-cue{display:flex;flex-direction:column;align-items:center;gap:10px;opacity:0;animation:fadeUp 1s ease 2.8s forwards}
 #scroll-cue span{font-size:9px;letter-spacing:5px;text-transform:uppercase;color:rgba(255,248,238,.35)}
@@ -706,16 +705,12 @@ textarea.form-ctrl{resize:none;height:80px}
 //  LENIS + GSAP
 // ══════════════════════════════════════════
 gsap.registerPlugin(ScrollTrigger);
-const isMobileDevice = window.innerWidth < 768 || ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-const lenis = new Lenis({
-  lerp: isMobileDevice ? 0.12 : 0.08,
-  smoothWheel: true,
-  syncTouch: false,
-  touchMultiplier: 1.2
-});
+const lenis = new Lenis({ lerp: 0.08, smoothWheel: true });
 window.lenis = lenis;
 lenis.on('scroll', ScrollTrigger.update);
-gsap.ticker.add(time => lenis.raf(time * 1000));
+gsap.ticker.add((time) => {
+  lenis.raf(time * 1000);
+});
 gsap.ticker.lagSmoothing(0);
 
 // ══════════════════════════════════════════
@@ -759,16 +754,11 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-function getDPR() {
-  const isSmallScreen = window.innerWidth < 768 || ('ontouchstart' in window);
-  return isSmallScreen ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
-}
-
-let DPR = getDPR();
 function resizeCanvas() {
-  DPR = getDPR();
-  canvas.width = Math.round(window.innerWidth * DPR);
-  canvas.height = Math.round(window.innerHeight * DPR);
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.25); // Cap DPR to prevent GPU lag
+  canvas.width = Math.round(window.innerWidth * dpr);
+  canvas.height = Math.round(window.innerHeight * dpr);
+  requestRender();
 }
 resizeCanvas();
 ctx.imageSmoothingEnabled = true;
@@ -778,12 +768,12 @@ const FRAME_COUNT = 300;
 const CRITICAL_FRAMES = 18; // First ~6% of frames needed for instant launch (< 1.5s)
 const frameSrc = i => `frames/frames/frame_${String(i + 1).padStart(4, '0')}.png`;
 const frames = new Array(FRAME_COUNT);
-const state = { frame: 0, tiltX: 0, tiltY: 0 };
+const state = { frame: 0 };
 let loadedCount = 0;
 let isPreloaderDismissed = false;
 let scrollScrubInitialized = false;
 let lastRenderedImg = null;
-let renderRaf = null;
+let renderPending = false;
 
 const plBar = document.getElementById('pl-bar');
 const plPct = document.getElementById('pl-pct');
@@ -813,34 +803,26 @@ function drawFrame() {
   if (!img || !img.complete || !img.naturalWidth) return;
   lastRenderedImg = img;
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  
-  // Smart Adaptive Framing: Desktop/Widescreen uses full cover; Mobile/Portrait preserves full waffle framing
-  const isPortrait = canvas.height > canvas.width || window.innerWidth < 768;
-  let scale;
-  if (isPortrait) {
-    // Fits entire waffle horizontally without aggressive crop
-    const fitWidth = canvas.width / img.naturalWidth;
-    const fitHeight = canvas.height / img.naturalHeight;
-    scale = Math.max(fitWidth * 1.08, fitHeight * 0.52);
-  } else {
-    // Desktop edge-to-edge cover
-    scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight) * 1.04;
-  }
+  // True full-viewport cover mode (eliminates all black bars on laptop & mobile)
+  const hRatio = canvas.width / img.naturalWidth;
+  const vRatio = canvas.height / img.naturalHeight;
+  const scale = Math.max(hRatio, vRatio);
 
-  const dw = img.naturalWidth * scale;
-  const dh = img.naturalHeight * scale;
-  const tx = isMobileDevice ? 0 : state.tiltX * 18;
-  const ty = isMobileDevice ? 0 : state.tiltY * 14;
-  
-  ctx.drawImage(img, (canvas.width - dw) / 2 + tx, (canvas.height - dh) / 2 + ty, dw, dh);
+  const drawWidth = img.naturalWidth * scale;
+  const drawHeight = img.naturalHeight * scale;
+  const drawX = (canvas.width - drawWidth) / 2;
+  const drawY = (canvas.height - drawHeight) / 2;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
 }
 
 function requestRender() {
-  if (!renderRaf) {
-    renderRaf = requestAnimationFrame(() => {
+  if (!renderPending) {
+    renderPending = true;
+    requestAnimationFrame(() => {
       drawFrame();
-      renderRaf = null;
+      renderPending = false;
     });
   }
 }
@@ -865,7 +847,7 @@ function initScrollScrub() {
     ease: 'none',
     scrollTrigger: {
       trigger: '#hero-wrap',
-      scrub: isMobileDevice ? 0.3 : 0.5,
+      scrub: 0.5,
       start: 'top top',
       end: 'bottom bottom'
     },
@@ -897,7 +879,7 @@ for (let i = 0; i < CRITICAL_FRAMES; i++) {
 
 // ── BACKGROUND STREAM: Stream Remaining Frames concurrently ──
 function streamRemainingFrames() {
-  const CONCURRENCY = isMobileDevice ? 4 : 6;
+  const CONCURRENCY = 6;
   let nextIdx = CRITICAL_FRAMES;
 
   function loadNext() {
@@ -931,22 +913,7 @@ setTimeout(() => {
   }
 }, 2500);
 
-window.addEventListener('resize', () => { resizeCanvas(); requestRender(); });
-
-// ── MOUSE PARALLAX TILT (Desktop only) ──
-if (!isMobileDevice) {
-  let rafTilt;
-  document.addEventListener('mousemove', e => {
-    cancelAnimationFrame(rafTilt);
-    rafTilt = requestAnimationFrame(() => {
-      const nx = (e.clientX / window.innerWidth - 0.5);
-      const ny = (e.clientY / window.innerHeight - 0.5);
-      state.tiltX += (nx - state.tiltX) * 0.08;
-      state.tiltY += (ny - state.tiltY) * 0.08;
-      requestRender();
-    });
-  });
-}
+window.addEventListener('resize', () => { resizeCanvas(); });
 
 // ══════════════════════════════════════════
 //  CUSTOM CURSOR
