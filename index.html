@@ -63,6 +63,9 @@
       pointer-events: none;
       display: block !important;
       background: #0d0704;
+      transform: translate3d(0, 0, 0);
+      will-change: transform;
+      image-rendering: -webkit-optimize-contrast;
     }
     #canvas-vignette {
       position: fixed;
@@ -846,16 +849,33 @@
     const frames = new Array(TOTAL_FRAMES);
     const frameTrack = { frame: 0 };
     let lastRenderedImg = null;
-    let renderPending = false;
+    let targetFrame = 0;
+    let renderedFrame = -1;
+    let isRendering = false;
 
     function resizeCanvas() {
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
-      canvas.width = Math.round(window.innerWidth * dpr);
-      canvas.height = Math.round(window.innerHeight * dpr);
-      requestRender();
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      renderFrame(renderedFrame >= 0 ? renderedFrame : 0);
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
+
+    function scheduleRender(frameIndex) {
+      targetFrame = Math.max(0, Math.min(TOTAL_FRAMES - 1, frameIndex));
+      if (!isRendering) {
+        isRendering = true;
+        requestAnimationFrame(renderLoop);
+      }
+    }
+
+    function renderLoop() {
+      if (targetFrame !== renderedFrame) {
+        renderFrame(targetFrame);
+        renderedFrame = targetFrame;
+      }
+      isRendering = false;
+    }
 
     function getNearestFrame(idx) {
       if (frames[idx] && frames[idx].complete && frames[idx].naturalWidth) return frames[idx];
@@ -886,22 +906,12 @@
       ctx.drawImage(img, dx, dy, dw, dh);
     }
 
-    function requestRender() {
-      if (!renderPending) {
-        renderPending = true;
-        requestAnimationFrame(() => {
-          renderFrame(frameTrack.frame);
-          renderPending = false;
-        });
-      }
-    }
-
     // Load first frame directly & paint immediately
     const firstFrame = new Image();
     firstFrame.onload = () => {
       frames[0] = firstFrame;
       lastRenderedImg = firstFrame;
-      requestRender();
+      scheduleRender(0);
       if (typeof ScrollTrigger !== 'undefined') ScrollTrigger.refresh();
     };
     firstFrame.onerror = () => {
@@ -920,7 +930,7 @@
         let fallbackTried = false;
         img.onload = () => {
           frames[curr] = img;
-          if (curr === Math.round(frameTrack.frame)) requestRender();
+          if (curr === Math.round(frameTrack.frame)) scheduleRender(curr);
           loadNext();
         };
         img.onerror = () => {
@@ -953,7 +963,7 @@
             start: 'top top',
             end: 'bottom bottom',
             scrub: 0.6,
-            onUpdate: () => renderFrame(Math.round(frameTrack.frame))
+            onUpdate: () => scheduleRender(Math.round(frameTrack.frame))
           }
         });
       } catch (e) { console.warn('GSAP init failed', e); }
@@ -965,7 +975,7 @@
         const total = hs.offsetHeight - window.innerHeight;
         const progress = Math.max(0, Math.min(1, -rect.top / total));
         frameTrack.frame = progress * (TOTAL_FRAMES - 1);
-        renderFrame(Math.round(frameTrack.frame));
+        scheduleRender(Math.round(frameTrack.frame));
       }, { passive: true });
     }
 
