@@ -1,0 +1,14 @@
+# Archive files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+
+# Logs
+*.log
