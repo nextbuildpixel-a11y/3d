@@ -748,7 +748,7 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
 });
 
 // ══════════════════════════════════════════
-//  CANVAS HERO
+//  CANVAS HERO & PROGRESSIVE STREAMING ENGINE
 // ══════════════════════════════════════════
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -762,17 +762,43 @@ ctx.imageSmoothingEnabled = true;
 ctx.imageSmoothingQuality = 'high';
 
 const FRAME_COUNT = 300;
+const CRITICAL_FRAMES = 18; // First ~6% of frames needed for instant launch (< 1.5s)
 const frameSrc = i => `frames/frames/frame_${String(i + 1).padStart(4, '0')}.png`;
 const frames = new Array(FRAME_COUNT);
 const state = { frame: 0, tiltX: 0, tiltY: 0 };
 let loadedCount = 0;
+let isPreloaderDismissed = false;
+let scrollScrubInitialized = false;
+let lastRenderedImg = null;
+
 const plBar = document.getElementById('pl-bar');
 const plPct = document.getElementById('pl-pct');
 const preloader = document.getElementById('preloader');
 
+function getNearestLoadedFrame(targetIdx) {
+  if (frames[targetIdx] && frames[targetIdx].complete && frames[targetIdx].naturalWidth) {
+    return frames[targetIdx];
+  }
+  // Look backwards first, then forwards to find nearest loaded frame
+  for (let offset = 1; offset < FRAME_COUNT; offset++) {
+    const down = targetIdx - offset;
+    if (down >= 0 && frames[down] && frames[down].complete && frames[down].naturalWidth) {
+      return frames[down];
+    }
+    const up = targetIdx + offset;
+    if (up < FRAME_COUNT && frames[up] && frames[up].complete && frames[up].naturalWidth) {
+      return frames[up];
+    }
+  }
+  return lastRenderedImg;
+}
+
 function drawFrame() {
-  const img = frames[Math.round(state.frame)];
+  const targetIdx = Math.min(Math.max(0, Math.round(state.frame)), FRAME_COUNT - 1);
+  const img = getNearestLoadedFrame(targetIdx);
   if (!img || !img.complete || !img.naturalWidth) return;
+  lastRenderedImg = img;
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const scale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight) * 1.05;
   const dw = img.naturalWidth * scale, dh = img.naturalHeight * scale;
@@ -780,35 +806,91 @@ function drawFrame() {
   ctx.drawImage(img, (canvas.width - dw) / 2 + tx, (canvas.height - dh) / 2 + ty, dw, dh);
 }
 
-function onFrameLoad() {
-  loadedCount++;
-  const pct = Math.round(loadedCount / FRAME_COUNT * 100);
-  plBar.style.width = pct + '%';
-  plPct.textContent = pct + '%';
-  if (loadedCount === 1) drawFrame();
-  if (loadedCount === FRAME_COUNT) {
-    drawFrame();
+function dismissPreloader() {
+  if (isPreloaderDismissed) return;
+  isPreloaderDismissed = true;
+  if (!scrollScrubInitialized) initScrollScrub();
+  drawFrame();
+  if (preloader) {
     preloader.classList.add('done');
-    setTimeout(() => { preloader.style.display = 'none'; }, 1100);
-    initScrollScrub();
+    setTimeout(() => { preloader.style.display = 'none'; }, 900);
   }
 }
 
-for (let i = 0; i < FRAME_COUNT; i++) {
+function initScrollScrub() {
+  if (scrollScrubInitialized) return;
+  scrollScrubInitialized = true;
+  gsap.to(state, {
+    frame: FRAME_COUNT - 1,
+    snap: 'frame',
+    ease: 'none',
+    scrollTrigger: {
+      trigger: '#hero-wrap',
+      scrub: 0.5,
+      start: 'top top',
+      end: 'bottom bottom'
+    },
+    onUpdate: drawFrame
+  });
+}
+
+function onFrameReady(index) {
+  loadedCount++;
+  if (!isPreloaderDismissed) {
+    const progress = Math.min(100, Math.round((loadedCount / CRITICAL_FRAMES) * 100));
+    if (plBar) plBar.style.width = progress + '%';
+    if (plPct) plPct.textContent = progress + '%';
+  }
+  if (loadedCount === 1) drawFrame();
+  if (loadedCount >= CRITICAL_FRAMES && !isPreloaderDismissed) {
+    dismissPreloader();
+  }
+}
+
+// ── FAST-START: Load Critical First Batch (< 20 frames) immediately ──
+for (let i = 0; i < CRITICAL_FRAMES; i++) {
   const img = new Image();
-  img.onload = onFrameLoad;
-  img.onerror = () => { console.warn('Frame failed:', frameSrc(i)); onFrameLoad(); };
+  img.onload = () => { onFrameReady(i); };
+  img.onerror = () => { onFrameReady(i); };
   img.src = frameSrc(i);
   frames[i] = img;
 }
 
-function initScrollScrub() {
-  gsap.to(state, {
-    frame: FRAME_COUNT - 1, snap: 'frame', ease: 'none',
-    scrollTrigger: { trigger: '#hero-wrap', scrub: 0.5, start: 'top top', end: 'bottom bottom' },
-    onUpdate: drawFrame
-  });
+// ── BACKGROUND STREAM: Stream Remaining Frames concurrently ──
+function streamRemainingFrames() {
+  const CONCURRENCY = 6;
+  let nextIdx = CRITICAL_FRAMES;
+
+  function loadNext() {
+    if (nextIdx >= FRAME_COUNT) return;
+    const current = nextIdx++;
+    const img = new Image();
+    img.onload = () => {
+      onFrameReady(current);
+      loadNext();
+    };
+    img.onerror = () => {
+      onFrameReady(current);
+      loadNext();
+    };
+    img.src = frameSrc(current);
+    frames[current] = img;
+  }
+
+  for (let c = 0; c < CONCURRENCY; c++) {
+    loadNext();
+  }
 }
+
+// Start streaming remaining frames after first batch begins
+setTimeout(streamRemainingFrames, 100);
+
+// ── SAFETY TIMEOUT: Force-dismiss preloader after 2.5s regardless of network ──
+setTimeout(() => {
+  if (!isPreloaderDismissed) {
+    dismissPreloader();
+  }
+}, 2500);
 
 window.addEventListener('resize', () => { resizeCanvas(); drawFrame(); });
 
